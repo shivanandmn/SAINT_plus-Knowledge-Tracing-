@@ -67,8 +67,9 @@ class StackedNMultiHeadAttention(nn.Module):
                                                                                                          num_heads=n_heads,
                                                                                                          dropout=dropout), ]), ])
         self.ffn = nn.ModuleList(n_stacks*[FFN(n_dims)])
-        self.mask = torch.triu(torch.ones(seq_len, seq_len),
-                               diagonal=1).to(dtype=torch.bool)
+        self.mask = torch.nan_to_num(torch.triu(torch.ones(seq_len, seq_len),
+                                                    diagonal=1).mul(-torch.inf)).to(torch.float)
+                
 
     def forward(self, input_q, input_k, input_v, encoder_output=None, break_layer=None):
         for stack in range(self.n_stacks):
@@ -118,14 +119,16 @@ class PlusSAINTModule(pl.LightningModule):
                                                   n_categories=Config.TOTAL_CAT,
                                                   n_dims=Config.EMBED_DIMS, seq_len=Config.MAX_SEQ)
         self.decoder_embedding = DecoderEmbedding(
-            n_responses=3, n_dims=Config.EMBED_DIMS, seq_len=Config.MAX_SEQ)
+            n_responses=4, n_dims=Config.EMBED_DIMS, seq_len=Config.MAX_SEQ)
         self.elapsed_time = nn.Linear(1, Config.EMBED_DIMS)
         self.fc = nn.Linear(Config.EMBED_DIMS, 1)
 
     def forward(self, x, y):
         enc = self.encoder_embedding(
             exercises=x["input_ids"], categories=x['input_cat'])
-        dec = self.decoder_embedding(responses=y)
+        R = y.roll(1,1)
+        R[:,0] = 2
+        dec = self.decoder_embedding(responses=R)
         elapsed_time = x["input_rtime"].unsqueeze(-1).float()
         ela_time = self.elapsed_time(elapsed_time)
         dec = dec + ela_time
@@ -154,6 +157,7 @@ class PlusSAINTModule(pl.LightningModule):
         out = torch.masked_select(out, target_mask)
         out = torch.sigmoid(out)
         labels = torch.masked_select(labels, target_mask)
+        
         self.log("train_loss", loss, on_step=True, prog_bar=True)
         return {"loss": loss, "outs": out, "labels": labels}
 
@@ -174,6 +178,7 @@ class PlusSAINTModule(pl.LightningModule):
         out = torch.masked_select(out, target_mask)
         out = torch.sigmoid(out)
         labels = torch.masked_select(labels, target_mask)
+        
         self.log("val_loss", loss, on_step=True, prog_bar=True)
         output = {"outs": out, "labels": labels}
         return {"val_loss": loss, "outs": out, "labels": labels}
